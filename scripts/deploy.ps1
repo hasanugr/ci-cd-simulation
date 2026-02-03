@@ -41,3 +41,6 @@ if ($LASTEXITCODE -gt 7) {
 }
 
 Write-Host "SUCCESS Deployment completed successfully!" -ForegroundColor Cyan
+
+# Force success exit code (Override Robocopy's exit code 1)
+exit 0
