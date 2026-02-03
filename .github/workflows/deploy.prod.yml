@@ -1,0 +1,60 @@
+name: Deploy to PROD (Auto-Merge)
+
+# Manual trigger only, no inputs required
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    # Write permission required to push merge back to GitHub
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout MAIN Branch
+        uses: actions/checkout@v4
+        with:
+          ref: main           # Always target MAIN branch explicitly (Production)
+          fetch-depth: 0      # Fetch full history for merge operation
+
+      - name: Setup Git User (For Merge)
+        run: |
+          git config --global user.name "CI/CD Bot"
+          git config --global user.email "bot@ci-cd.com"
+
+      - name: Merge QA into MAIN
+        shell: powershell
+        run: |
+          Write-Host ">> Merging QA into MAIN..."
+          git fetch origin qa
+          
+          # Try to merge QA into MAIN
+          # Added --no-edit to prevent git from waiting for a commit message editor
+          git merge origin/qa --allow-unrelated-histories --no-edit -m "chore: release qa to main"
+          
+          # Check if merge resulted in conflicts
+          $conflictFiles = git diff --name-only --diff-filter=U
+          if ($conflictFiles) {
+            Write-Host "[!] MERGE CONFLICT DETECTED!" -ForegroundColor Red
+            Write-Host "Conflicting files:" -ForegroundColor Yellow
+            Write-Host $conflictFiles
+            Write-Host "`nPlease resolve conflicts manually and try again." -ForegroundColor Yellow
+            exit 1
+          }
+          
+          # Push merged changes back to GitHub
+          git push origin main
+          Write-Host "[OK] Merge Success and Pushed (QA -> MAIN)!"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # Install & Build is handled inside the deploy script on the server
+      - name: Run Deploy Script
+        shell: powershell
+        run: |
+          # MAIN branch is now updated, triggering deployment...
+          ./scripts/deploy.ps1 -environment "PROD"
