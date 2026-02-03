@@ -44,14 +44,14 @@ jobs:
           
           # Push merged changes back to GitHub
           git push origin qa
-          Write-Host "✅ Merge Success & Pushed!"
+          Write-Host "✅ Merge Success and Pushed!"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
 
-      # Install & Build is handled inside the deploy script on the server
+      # Install and Build is handled inside the deploy script on the server
       - name: Run Deploy Script
         shell: powershell
         run: |
