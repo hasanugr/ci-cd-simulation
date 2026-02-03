@@ -1,12 +1,12 @@
 name: Deploy to QA
 
-# Sadece manuel tetikleme (Buton) ile çalışsın
+# Trigger only manually via GitHub UI
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: self-hosted  # <--- İşte senin bilgisayarındaki ajanı çağıran sihirli satır!
+    runs-on: self-hosted  # Runs on your local Windows machine
     
     steps:
       - name: Checkout Code
@@ -20,4 +20,5 @@ jobs:
       - name: Run Deploy Script
         shell: powershell
         run: |
+          # Execute the PowerShell script with QA parameter
           ./scripts/deploy.ps1 -environment "QA"

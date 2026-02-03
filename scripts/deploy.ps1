@@ -1,42 +1,42 @@
 param(
-    [string]$environment # "QA" veya "PROD" parametresi gelecek
+    [string]$environment
 )
 
-# 1. Hata olursa scripti durdur
+# Stop script immediately if any error occurs
 $ErrorActionPreference = "Stop"
 
-Write-Host "🚀 Deploy baslatiliyor... Hedef: $environment" -ForegroundColor Green
+Write-Host "🚀 Starting deployment... Target: $environment" -ForegroundColor Green
 
-# 2. Hedef Klasörü Belirle
+# Define Target Folder (IIS Directory)
 $targetFolder = "C:\inetpub\wwwroot\Simulation_$environment"
-Write-Host "📂 Hedef Klasor: $targetFolder"
+Write-Host "📂 Target Folder: $targetFolder"
 
-# 3. Bağımlılıkları Yükle (Corepack enable diyerek pnpm'i garantiye alıyoruz)
-Write-Host "📦 Bagimliliklar yukleniyor..."
+# 1. Install Dependencies
+Write-Host "📦 Installing dependencies..."
 cmd /c "corepack enable"
 cmd /c "pnpm install --no-frozen-lockfile"
 
-# 4. Projeyi Build Et
-Write-Host "🔨 Build aliniyor..."
+# 2. Build Project
+Write-Host "🔨 Building project..."
 cmd /c "pnpm build"
 
-# 5. Dosyaları Kopyala (Robocopy kullanıyoruz, Windows'un en hizli kopyalama aracidir)
-Write-Host "🚚 Dosyalar kopyalaniyor..."
+# 3. Copy Files (Using Robocopy for speed)
+Write-Host "🚚 Copying files to server..."
 
-# Eğer klasör yoksa oluştur
+# Create directory if it does not exist
 if (!(Test-Path -Path $targetFolder)) {
     New-Item -ItemType Directory -Force -Path $targetFolder
+    Write-Host "✨ Created new directory: $targetFolder"
 }
 
-# 'out' klasörünü hedef klasöre ayna (Mirror) gibi kopyala
-# /MIR: Kaynakta olmayan dosyaları hedefte de siler (Temizlik yapar)
-# /XD: .git gibi klasörleri hariç tutar
+# Mirror copy: Syncs 'out' folder to target (Deletes extra files in target)
+# Flags: /MIR (Mirror) /NFL (No File List) /NDL (No Dir List) /np (No Progress)
 robocopy .\out $targetFolder /MIR /NFL /NDL /NJH /NJS /nc /ns /np
 
-# Robocopy hata kodu 1 (başarılı kopyalama) dışındaysa uyarı ver ama scripti patlatma
+# Check Robocopy Exit Code (0-7 indicates success)
 if ($LASTEXITCODE -gt 7) {
-    Write-Error "❌ Kopyalama sirasinda hata olustu. Robocopy Exit Code: $LASTEXITCODE"
+    Write-Error "❌ Copy failed. Robocopy Exit Code: $LASTEXITCODE"
     exit 1
 }
 
-Write-Host "✅ Deploy Basariyla Tamamlandi!" -ForegroundColor Cyan
+Write-Host "✅ Deployment completed successfully!" -ForegroundColor Cyan
