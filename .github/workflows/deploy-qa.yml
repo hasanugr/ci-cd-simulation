@@ -1,0 +1,23 @@
+name: Deploy to QA
+
+# Sadece manuel tetikleme (Buton) ile çalışsın
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted  # <--- İşte senin bilgisayarındaki ajanı çağıran sihirli satır!
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run Deploy Script
+        shell: powershell
+        run: |
+          ./scripts/deploy.ps1 -environment "QA"
