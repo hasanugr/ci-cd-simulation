@@ -30,8 +30,9 @@ if (!(Test-Path -Path $targetFolder)) {
 }
 
 # Mirror copy: Syncs out folder to target (Deleted extra files in target)
-# Flags: /MIR (Mirror) /NFL (No File List) /NDL (No Dir List) /np (No Progress)
-robocopy .\out $targetFolder /MIR /NFL /NDL /NJH /NJS /nc /ns /np
+# Flags: /MIR (Mirror) /NFL (No File List) /NDL (No Dir List) /NJH (No Job Header) /NJS (No Job Summary) /nc (No Class) /ns (No Size) /np (No Progress) /R:0 (No Retries) /W:0 (No Wait)
+robocopy .\out $targetFolder /MIR /NFL /NDL /NJH /NJS /nc /ns /np /R:0 /W:0
+
 
 # Check Robocopy Exit Code (0-7 indicates success)
 if ($LASTEXITCODE -gt 7) {
