@@ -135,38 +135,7 @@ jobs:
             Write-Host "[OK] Tag Created and Pushed: $env:FULL_VERSION" -ForegroundColor Green
           }
 
-      # --- STEP 5: UPDATE DEPLOYMENT DESCRIPTION ---
-      # Set custom deployment description for GitHub Environments UI
-      - name: Update Deployment Description
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fullVersion = process.env.FULL_VERSION;
-            
-            // Get current deployment
-            const deployments = await github.rest.repos.listDeployments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              environment: 'QA',
-              per_page: 1
-            });
-            
-            if (deployments.data.length > 0) {
-              const deploymentId = deployments.data[0].id;
-              
-              // Update deployment with custom description
-              await github.rest.repos.updateDeployment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                deployment_id: deploymentId,
-                description: `✅ Deploy QA ${fullVersion}`
-              });
-              
-              console.log(`Updated deployment description: Deploy QA ${fullVersion}`);
-            }
-
-      # --- STEP 6: SUMMARY ---
+      # --- STEP 5: SUMMARY ---
       # Always show summary, even if deployment failed
       - name: Add Job Summary
         if: always()
