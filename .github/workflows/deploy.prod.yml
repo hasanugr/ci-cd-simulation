@@ -37,7 +37,9 @@ jobs:
           $allQaTags = git tag -l "qa-v*" | Sort-Object -Descending
           
           if ($allQaTags.Count -eq 0) {
-            Write-Host "[!] No QA tag found. Please deploy to QA first." -ForegroundColor Red
+            $err = "No QA tag found. Please deploy to QA environment first."
+            Write-Host "[!] $err" -ForegroundColor Red
+            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
           
@@ -76,10 +78,12 @@ jobs:
           # Check if merge resulted in conflicts
           $conflictFiles = git diff --name-only --diff-filter=U
           if ($conflictFiles) {
+            $err = "Merge conflict detected. Conflicting files: $conflictFiles"
             Write-Host "[!] MERGE CONFLICT DETECTED!" -ForegroundColor Red
             Write-Host "Conflicting files:" -ForegroundColor Yellow
             Write-Host $conflictFiles
             Write-Host "`nPlease resolve conflicts manually and try again." -ForegroundColor Yellow
+            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
           
@@ -99,6 +103,11 @@ jobs:
         run: |
           # MAIN branch is now updated, triggering deployment...
           ./scripts/deploy.ps1 -environment "PROD"
+          if ($LASTEXITCODE -ne 0) {
+            $err = "Deploy script failed with exit code $LASTEXITCODE. Check deployment logs."
+            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            exit 1
+          }
 
       # --- STEP 4: TAGGING (Inherited from QA) ---
       # Only create tag if deployment was successful
@@ -127,10 +136,16 @@ jobs:
           
           $msg = "### Deploy Summary`n"
           $msg += "* **Status:** $status`n"
+          
+          # Show error reason if failed
+          if ($env:FAILURE_REASON) {
+            $msg += "* **ERROR REASON:** $env:FAILURE_REASON`n"
+          }
+          
           $msg += "* **Environment:** PROD`n"
-          $msg += "* **Source QA Tag:** $env:QA_TAG`n"
-          $msg += "* **PROD Release Tag:** $env:FULL_VERSION`n"
-          $msg += "* **App Version:** $env:APP_VERSION`n"
+          $msg += "* **Source QA Tag:** $($env:QA_TAG -replace '^$', 'N/A')`n"
+          $msg += "* **PROD Release Tag:** $($env:FULL_VERSION -replace '^$', 'N/A - Failed before tagging')`n"
+          $msg += "* **App Version:** $($env:APP_VERSION -replace '^$', 'N/A')`n"
           $msg += "* **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm')`n"
           
           echo $msg | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
