@@ -82,7 +82,7 @@ jobs:
           # Try to merge DEV into QA
           # Added --no-edit to prevent git from waiting for a commit message editor
           $commitMsg = "chore(qa): merge dev to qa [v$env:APP_VERSION] - CI/CD Auto-Merge"
-          git merge origin/dev --allow-unrelated-histories --no-edit -m "$commitMsg"
+          git merge origin/qa --no-ff --allow-unrelated-histories --no-edit -m "$commitMsg"
           
           # Check if merge resulted in conflicts
           $conflictFiles = git diff --name-only --diff-filter=U
