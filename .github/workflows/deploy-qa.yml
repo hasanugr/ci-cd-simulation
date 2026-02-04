@@ -72,33 +72,57 @@ jobs:
           echo "FULL_VERSION=$fullVer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "APP_VERSION=$appVer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      # --- STEP 2: MERGE ---
-      - name: Merge DEV into QA
+      # --- STEP 2: CREATE AND AUTO-MERGE PR ---
+      - name: Create Pull Request (DEV → QA)
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: powershell
         run: |
-          Write-Host ">> Merging DEV into QA..."
-          git fetch origin dev
+          Write-Host ">> Creating Pull Request from DEV to QA..." -ForegroundColor Cyan
           
-          # Try to merge DEV into QA
-          # Added --no-edit to prevent git from waiting for a commit message editor
-          $commitMsg = "chore(qa): merge dev to qa [v$env:APP_VERSION] - CI/CD Auto-Merge"
-          git merge origin/qa --no-ff --allow-unrelated-histories --no-edit -m "$commitMsg"
+          # Check if PR already exists
+          $existingPR = gh pr list --base qa --head dev --state open --json number --jq '.[0].number'
           
-          # Check if merge resulted in conflicts
-          $conflictFiles = git diff --name-only --diff-filter=U
-          if ($conflictFiles) {
-            $err = "Merge conflict detected. Conflicting files: $conflictFiles"
-            Write-Host "[!] MERGE CONFLICT DETECTED!" -ForegroundColor Red
-            Write-Host "Conflicting files:" -ForegroundColor Yellow
-            Write-Host $conflictFiles
-            Write-Host "`nPlease resolve conflicts manually and try again." -ForegroundColor Yellow
+          if ($existingPR) {
+            Write-Host ">> PR #$existingPR already exists, using it..." -ForegroundColor Yellow
+            echo "PR_NUMBER=$existingPR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            # Create new PR
+            $prNumber = gh pr create --base qa --head dev `
+              --title "chore(qa): auto-merge [v$env:APP_VERSION]" `
+              --body "Automated QA deployment from CI/CD workflow.`n`n**Version:** $env:FULL_VERSION`n**Triggered by:** @${{ github.actor }}" `
+              --json number --jq '.number'
+            
+            if ($LASTEXITCODE -ne 0) {
+              $err = "Failed to create PR. Check branch protection rules or GitHub CLI authentication."
+              Write-Host "[!] $err" -ForegroundColor Red
+              echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              exit 1
+            }
+            
+            Write-Host ">> PR #$prNumber created successfully" -ForegroundColor Green
+            echo "PR_NUMBER=$prNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Auto-Merge Pull Request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: powershell
+        run: |
+          Write-Host ">> Attempting to merge PR #$env:PR_NUMBER..." -ForegroundColor Cyan
+          
+          # Enable auto-merge (will merge when all checks pass and approvals are met)
+          gh pr merge $env:PR_NUMBER --merge --auto
+          
+          if ($LASTEXITCODE -ne 0) {
+            $err = "Failed to enable auto-merge for PR #$env:PR_NUMBER. Check for conflicts or approval requirements."
+            Write-Host "[!] $err" -ForegroundColor Red
             echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
           
-          # Push merged changes back to GitHub
-          git push origin qa
-          Write-Host "[OK] Merge Success and Pushed!"
+          Write-Host "[OK] PR #$env:PR_NUMBER merge initiated!" -ForegroundColor Green
+          Write-Host ">> If approval is required, an admin must approve the PR." -ForegroundColor Yellow
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
