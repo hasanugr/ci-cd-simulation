@@ -23,11 +23,18 @@ on:
         type: boolean
         default: false
 
-run-name: Rollback PROD (${{ inputs.rollback_mode }}) by @${{ github.actor }}
+# Dynamic title: Shows manual tag only in MANUAL mode
+run-name: Rollback PROD (${{ inputs.rollback_mode == 'MANUAL_TAG (Enter Specific Tag)' && inputs.manual_tag || inputs.rollback_mode }}) by @${{ github.actor }}
 
 jobs:
   rollback:
     runs-on: self-hosted
+    
+    # PROD Environment tracking (rollback operations are logged in deployment history)
+    # Rollback version sent to PROD environment for visibility after rollback
+    environment:
+      name: PROD
+    
     # Read-only access is sufficient for rollback (no commits or tags created)
     permissions:
       contents: read
@@ -38,7 +45,9 @@ jobs:
         shell: powershell
         run: |
           if ("${{ inputs.confirm_action }}" -ne "true") {
-            Write-Host "[!] CONFIRMATION NOT CHECKED! Operation aborted." -ForegroundColor Red
+            $err = "User confirmation NOT checked. Please confirm the action."
+            Write-Host "[!] $err" -ForegroundColor Red
+            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
           Write-Host "[OK] User confirmation received. Starting rollback..." -ForegroundColor Green
@@ -54,6 +63,7 @@ jobs:
         shell: powershell
         run: |
           $mode = "${{ inputs.rollback_mode }}"
+          $manualInput = "${{ inputs.manual_tag }}"
           $targetTag = ""
 
           if ($mode -like "AUTO_PREVIOUS*") {
@@ -63,10 +73,11 @@ jobs:
             git fetch origin --tags
             
             # Get all PROD tags and sort by semantic version
-            # Split version parts for proper numeric sorting
             $allTags = git tag -l "prod-v*"
             if ([string]::IsNullOrWhiteSpace($allTags)) {
-              Write-Host "[!] No PROD tags found in repository." -ForegroundColor Red
+              $err = "No PROD tags found in repository. Deploy to PROD first."
+              Write-Host "[!] $err" -ForegroundColor Red
+              echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
               exit 1
             }
             
@@ -78,7 +89,9 @@ jobs:
             
             # Need at least 2 tags (current and previous)
             if ($tags.Count -lt 2) {
-               Write-Host "[!] Insufficient tags found. At least 2 deployments required." -ForegroundColor Red
+               $err = "Insufficient PROD tags for auto-rollback. Need at least 2 deployments."
+               Write-Host "[!] $err" -ForegroundColor Red
+               echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
                exit 1
             }
             
@@ -89,21 +102,26 @@ jobs:
             
           } else {
             Write-Host ">> Mode: MANUAL" -ForegroundColor Cyan
-            $targetTag = "${{ inputs.manual_tag }}"
             
-            if ([string]::IsNullOrWhiteSpace($targetTag)) {
-              Write-Host "[!] Manual mode selected but no tag name provided!" -ForegroundColor Red
+            # MANUAL mode requires input
+            if ([string]::IsNullOrWhiteSpace($manualInput)) {
+              $err = "Manual mode selected but tag input is EMPTY. Please provide a tag name."
+              Write-Host "[!] $err" -ForegroundColor Red
+              echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
               exit 1
             }
             
             # Validate that the manual tag exists
             git fetch origin --tags
-            $tagExists = git tag -l $targetTag
+            $tagExists = git tag -l $manualInput
             if ([string]::IsNullOrWhiteSpace($tagExists)) {
-              Write-Host "[!] Tag '$targetTag' does not exist in repository!" -ForegroundColor Red
+              $err = "Tag '$manualInput' does NOT exist in repository. Check spelling or create tag first."
+              Write-Host "[!] $err" -ForegroundColor Red
+              echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
               exit 1
             }
             
+            $targetTag = $manualInput
             Write-Host ">> Manual tag validated: $targetTag" -ForegroundColor Green
           }
           
@@ -139,6 +157,11 @@ jobs:
         run: |
           Write-Host "[!] EMERGENCY: Rolling back PROD to version '$env:TARGET_TAG'..." -ForegroundColor Red
           ./scripts/deploy.ps1 -environment "PROD"
+          if ($LASTEXITCODE -ne 0) {
+            $err = "Deploy script failed with exit code $LASTEXITCODE. Check deployment logs."
+            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            exit 1
+          }
 
       # --- STEP 6: SUMMARY ---
       # Always show summary, even if rollback failed
@@ -150,9 +173,18 @@ jobs:
           
           $msg = "### Rollback Operation Log`n"
           $msg += "* **Status:** $status`n"
+          
+          # Show error reason if failed
+          if ($env:FAILURE_REASON) {
+            $msg += "* **ERROR REASON:** $env:FAILURE_REASON`n"
+          }
+          
+          # Emphasize target version for visibility in Environment history
+          $msg += "`n#### Rollback Target`n"
+          $msg += "* **Restored to Version:** **$($env:TARGET_TAG -replace '^$', 'N/A - Failed before tag selection')**`n"
           $msg += "* **Mode:** ${{ inputs.rollback_mode }}`n"
-          $msg += "* **Restored Tag:** $env:TARGET_TAG`n"
           $msg += "* **Authorized By:** @${{ github.actor }}`n"
           $msg += "* **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm')`n"
+          $msg += "`n_Note: GitHub Environment shows this deployment in history. Current version on IIS is now **$env:TARGET_TAG**_`n"
           
           echo $msg | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
