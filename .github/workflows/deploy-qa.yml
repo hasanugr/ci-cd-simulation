@@ -14,13 +14,11 @@ jobs:
     # QA Environment tracking for deployment history and status
     environment:
       name: QA
-      url: http://localhost:8080/  # Local QA for testing - OPTIONAL: Uncomment and set your live QA site URL for direct access
-      # url: http://your-qa-site.com  # OPTIONAL: Uncomment and set your live QA site URL for direct access
+      url: http://localhost:8080/
     
-    # Write permission required to create PRs, push tags, and merge branches
+    # Token with admin privileges to bypass branch protection
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - name: Checkout QA Branch
@@ -28,6 +26,7 @@ jobs:
         with:
           ref: qa             # Always target QA branch explicitly
           fetch-depth: 0      # Fetch full history for tag calculation and merge operation
+          token: ${{ secrets.BYPASS_TOKEN }}  # Use bypass token to push through branch protection
 
       - name: Setup Git User (For Merge)
         run: |
