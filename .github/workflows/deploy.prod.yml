@@ -14,13 +14,11 @@ jobs:
     # PROD Environment tracking for deployment history and status
     environment:
       name: PROD
-      url: http://localhost:8081/  # Local PROD for testing - OPTIONAL: Uncomment and set your live PROD site URL for direct access
-      # url: http://your-prod-site.com  # OPTIONAL: Uncomment and set your live PROD site URL for direct access
+      url: http://localhost:8081/
     
-    # Write permission required to create PRs, push tags, and merge branches
+    # Token with admin privileges to bypass branch protection
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - name: Checkout MAIN Branch
@@ -28,6 +26,7 @@ jobs:
         with:
           ref: main           # Always target MAIN branch explicitly (Production)
           fetch-depth: 0      # Fetch full history for tag reading and merge operation
+          token: ${{ secrets.BYPASS_TOKEN }}  # Use bypass token to push through branch protection
 
       - name: Setup Git User (For Merge)
         run: |
