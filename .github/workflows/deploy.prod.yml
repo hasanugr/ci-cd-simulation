@@ -10,6 +10,12 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
+    
+    # PROD Environment tracking for deployment history and status
+    environment:
+      name: PROD
+      # url: http://your-prod-site.com  # OPTIONAL: Uncomment and set your live PROD site URL for direct access
+    
     # Write permission required to push merge and tags back to GitHub
     permissions:
       contents: write
