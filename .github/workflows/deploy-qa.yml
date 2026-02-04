@@ -98,6 +98,12 @@ jobs:
           
           # Push merged changes back to GitHub
           git push origin qa
+          if ($LASTEXITCODE -ne 0) {
+            $err = "Failed to push merged changes to GitHub. Check branch protection rules."
+            Write-Host "[!] $err" -ForegroundColor Red
+            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            exit 1
+          }
           Write-Host "[OK] Merge Success and Pushed!" -ForegroundColor Green
 
       - name: Setup Node.js
