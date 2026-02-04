@@ -14,6 +14,7 @@ jobs:
     # QA Environment tracking for deployment history and status
     environment:
       name: QA
+      url: http://localhost:8080/  # Local QA for testing - OPTIONAL: Uncomment and set your live QA site URL for direct access
       # url: http://your-qa-site.com  # OPTIONAL: Uncomment and set your live QA site URL for direct access
     
     # Write permission required to push merge and tags back to GitHub
