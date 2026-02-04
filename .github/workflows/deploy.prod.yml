@@ -80,7 +80,7 @@ jobs:
           # Try to merge QA into MAIN
           # Added --no-edit to prevent git from waiting for a commit message editor
           $commitMsg = "chore(prod): release qa to main [v$env:APP_VERSION from $env:QA_TAG] - CI/CD Auto-Release"
-          git merge origin/qa --allow-unrelated-histories --no-edit -m "$commitMsg"
+          git merge origin/qa --no-ff --allow-unrelated-histories --no-edit -m "$commitMsg"
           
           # Check if merge resulted in conflicts
           $conflictFiles = git diff --name-only --diff-filter=U
