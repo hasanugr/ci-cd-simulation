@@ -1,0 +1,158 @@
+name: Rollback PROD
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_mode:
+        description: 'Select Rollback Method'
+        required: true
+        default: 'AUTO_PREVIOUS'
+        type: choice
+        options:
+        - 'AUTO_PREVIOUS (Revert to Last Working Version)'
+        - 'MANUAL_TAG (Enter Specific Tag)'
+      
+      manual_tag:
+        description: 'Manual Tag Name (e.g., prod-v0.1.0.5)'
+        required: false
+        type: string
+      
+      confirm_action:
+        description: 'CONFIRMATION: I confirm the PROD environment will be changed.'
+        required: true
+        type: boolean
+        default: false
+
+run-name: Rollback PROD (${{ inputs.rollback_mode }}) by @${{ github.actor }}
+
+jobs:
+  rollback:
+    runs-on: self-hosted
+    # Read-only access is sufficient for rollback (no commits or tags created)
+    permissions:
+      contents: read
+
+    steps:
+      # --- STEP 1: SECURITY CHECK ---
+      - name: Security Check and Confirmation
+        shell: powershell
+        run: |
+          if ("${{ inputs.confirm_action }}" -ne "true") {
+            Write-Host "[!] CONFIRMATION NOT CHECKED! Operation aborted." -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] User confirmation received. Starting rollback..." -ForegroundColor Green
+
+      # --- STEP 2: CHECKOUT AND FETCH TAGS ---
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history to access all tags
+          
+      # --- STEP 3: DETERMINE TARGET TAG ---
+      - name: Determine Rollback Target
+        shell: powershell
+        run: |
+          $mode = "${{ inputs.rollback_mode }}"
+          $targetTag = ""
+
+          if ($mode -like "AUTO_PREVIOUS*") {
+            Write-Host ">> Mode: AUTOMATIC (Finding previous working version...)" -ForegroundColor Cyan
+            
+            # Fetch all tags from remote
+            git fetch origin --tags
+            
+            # Get all PROD tags and sort by semantic version
+            # Split version parts for proper numeric sorting
+            $allTags = git tag -l "prod-v*"
+            if ([string]::IsNullOrWhiteSpace($allTags)) {
+              Write-Host "[!] No PROD tags found in repository." -ForegroundColor Red
+              exit 1
+            }
+            
+            $tags = $allTags -split "`n" | Where-Object { $_ -ne "" } | Sort-Object {
+              # Extract version numbers for proper sorting (prod-v0.1.0.10 > prod-v0.1.0.9)
+              $parts = $_ -replace "^prod-v", "" -split "\."
+              [int]$parts[0] * 1000000 + [int]$parts[1] * 10000 + [int]$parts[2] * 100 + [int]$parts[3]
+            } -Descending
+            
+            # Need at least 2 tags (current and previous)
+            if ($tags.Count -lt 2) {
+               Write-Host "[!] Insufficient tags found. At least 2 deployments required." -ForegroundColor Red
+               exit 1
+            }
+            
+            # 0: Current version, 1: Previous version
+            $targetTag = $tags[1]
+            Write-Host ">> Current Version: $($tags[0])" -ForegroundColor Gray
+            Write-Host ">> Rolling back to: $targetTag" -ForegroundColor Yellow
+            
+          } else {
+            Write-Host ">> Mode: MANUAL" -ForegroundColor Cyan
+            $targetTag = "${{ inputs.manual_tag }}"
+            
+            if ([string]::IsNullOrWhiteSpace($targetTag)) {
+              Write-Host "[!] Manual mode selected but no tag name provided!" -ForegroundColor Red
+              exit 1
+            }
+            
+            # Validate that the manual tag exists
+            git fetch origin --tags
+            $tagExists = git tag -l $targetTag
+            if ([string]::IsNullOrWhiteSpace($tagExists)) {
+              Write-Host "[!] Tag '$targetTag' does not exist in repository!" -ForegroundColor Red
+              exit 1
+            }
+            
+            Write-Host ">> Manual tag validated: $targetTag" -ForegroundColor Green
+          }
+          
+          # Save target tag for subsequent steps
+          echo "TARGET_TAG=$targetTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # --- STEP 4: EXECUTE ROLLBACK ---
+      - name: Checkout Target Tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_TAG }}
+
+      - name: Verify Checkout
+        shell: powershell
+        run: |
+          $hash = git rev-parse HEAD
+          $currentTag = git describe --tags --exact-match HEAD 2>$null
+          Write-Host ">> Checked Out Tag: $env:TARGET_TAG" -ForegroundColor Green
+          Write-Host ">> Commit Hash: $hash" -ForegroundColor Yellow
+          if ($currentTag) {
+            Write-Host ">> Tag Verification: PASSED" -ForegroundColor Green
+          }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # --- STEP 5: DEPLOY ---
+      # Install and Build is handled inside the deploy script on the server
+      - name: Run Deploy Script
+        shell: powershell
+        run: |
+          Write-Host "[!] EMERGENCY: Rolling back PROD to version '$env:TARGET_TAG'..." -ForegroundColor Red
+          ./scripts/deploy.ps1 -environment "PROD"
+
+      # --- STEP 6: SUMMARY ---
+      # Always show summary, even if rollback failed
+      - name: Add Job Summary
+        if: always()
+        shell: powershell
+        run: |
+          $status = if ("${{ job.status }}" -eq "success") { "SUCCESS" } else { "FAILED" }
+          
+          $msg = "### Rollback Operation Log`n"
+          $msg += "* **Status:** $status`n"
+          $msg += "* **Mode:** ${{ inputs.rollback_mode }}`n"
+          $msg += "* **Restored Tag:** $env:TARGET_TAG`n"
+          $msg += "* **Authorized By:** @${{ github.actor }}`n"
+          $msg += "* **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm')`n"
+          
+          echo $msg | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
