@@ -71,56 +71,70 @@ jobs:
           echo "QA_TAG=$qaTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # --- STEP 2: CREATE AND AUTO-MERGE PR ---
-      - name: Create Pull Request (QA → MAIN)
+      - name: Create and Auto-Merge Pull Request (QA → MAIN)
+        uses: actions/github-script@v7
         env:
-          GH_TOKEN: ${{ github.token }}
-        shell: powershell
-        run: |
-          Write-Host ">> Creating Pull Request from QA to MAIN..." -ForegroundColor Cyan
-          
-          # Check if PR already exists
-          $existingPR = gh pr list --base main --head qa --state open --json number --jq '.[0].number'
-          
-          if ($existingPR) {
-            Write-Host ">> PR #$existingPR already exists, using it..." -ForegroundColor Yellow
-            echo "PR_NUMBER=$existingPR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } else {
-            # Create new PR
-            $prNumber = gh pr create --base main --head qa `
-              --title "chore(prod): auto-release [v$env:APP_VERSION from $env:QA_TAG]" `
-              --body "Automated PROD release from CI/CD workflow.`n`n**QA Tag:** $env:QA_TAG`n**PROD Tag:** $env:FULL_VERSION`n**Triggered by:** @${{ github.actor }}" `
-              --json number --jq '.number'
+          FULL_VERSION: ${{ env.FULL_VERSION }}
+          APP_VERSION: ${{ env.APP_VERSION }}
+          QA_TAG: ${{ env.QA_TAG }}
+        with:
+          script: |
+            const fullVersion = process.env.FULL_VERSION;
+            const appVersion = process.env.APP_VERSION;
+            const qaTag = process.env.QA_TAG;
             
-            if ($LASTEXITCODE -ne 0) {
-              $err = "Failed to create PR. Check branch protection rules or GitHub CLI authentication."
-              Write-Host "[!] $err" -ForegroundColor Red
-              echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              exit 1
+            console.log('>> Creating Pull Request from QA to MAIN...');
+            
+            // Check if PR already exists
+            const { data: existingPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              base: 'main',
+              head: `${context.repo.owner}:qa`
+            });
+            
+            let prNumber;
+            
+            if (existingPRs.length > 0) {
+              prNumber = existingPRs[0].number;
+              console.log(`>> PR #${prNumber} already exists, using it...`);
+            } else {
+              // Create new PR
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `chore(prod): auto-release [v${appVersion} from ${qaTag}]`,
+                body: `Automated PROD release from CI/CD workflow.\n\n**QA Tag:** ${qaTag}\n**PROD Tag:** ${fullVersion}\n**Triggered by:** @${context.actor}`,
+                head: 'qa',
+                base: 'main'
+              });
+              
+              prNumber = pr.number;
+              console.log(`>> PR #${prNumber} created successfully`);
             }
             
-            Write-Host ">> PR #$prNumber created successfully" -ForegroundColor Green
-            echo "PR_NUMBER=$prNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          }
-
-      - name: Auto-Merge Pull Request
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: powershell
-        run: |
-          Write-Host ">> Attempting to merge PR #$env:PR_NUMBER..." -ForegroundColor Cyan
-          
-          # Enable auto-merge (will merge when all checks pass and approvals are met)
-          gh pr merge $env:PR_NUMBER --merge --auto
-          
-          if ($LASTEXITCODE -ne 0) {
-            $err = "Failed to enable auto-merge for PR #$env:PR_NUMBER. Check for conflicts or approval requirements."
-            Write-Host "[!] $err" -ForegroundColor Red
-            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            exit 1
-          }
-          
-          Write-Host "[OK] PR #$env:PR_NUMBER merge initiated!" -ForegroundColor Green
-          Write-Host ">> If approval is required, an admin must approve the PR." -ForegroundColor Yellow
+            // Save PR number for next steps
+            core.exportVariable('PR_NUMBER', prNumber);
+            
+            // Enable auto-merge
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: 'merge'
+              });
+              console.log(`[OK] PR #${prNumber} merged successfully!`);
+            } catch (error) {
+              if (error.message.includes('required status checks')) {
+                console.log(`>> PR #${prNumber} waiting for status checks or approvals...`);
+                console.log('>> If approval is required, an admin must approve the PR.');
+              } else {
+                core.setFailed(`Failed to merge PR: ${error.message}`);
+                process.env.FAILURE_REASON = `PR merge failed: ${error.message}`;
+              }
+            }
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
