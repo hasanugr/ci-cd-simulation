@@ -76,8 +76,8 @@ This project provides a **complete, automated CI/CD pipeline** specifically desi
 1. **Clone and configure**
 
    ```bash
-   git clone https://github.com/yourusername/ci-cd-simulation.git
-   cd ci-cd-simulation
+   git clone https://github.com/yourusername/iis-nodejs-deployment.git
+   cd iis-nodejs-deployment
    ```
 
 2. **Update deployment paths**
@@ -225,7 +225,7 @@ Phase 4: CLEANUP
 ## Project Structure
 
 ```
-ci-cd-simulation/
+iis-nodejs-deployment/
 ├── .github/
 │   └── workflows/
 │       ├── deploy-qa.yml          # QA deployment workflow
@@ -364,7 +364,7 @@ Designed for organizations running Node.js applications on Windows Server + IIS,
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/ci-cd-simulation/issues)
+- **Issues**: [GitHub Issues](https://github.com/yourusername/iis-nodejs-deployment/issues)
 - **Documentation**: [Complete Setup Guide](docs/ci-cd-guide-en.md)
 - **Discussions**: Share your use cases and improvements
 
