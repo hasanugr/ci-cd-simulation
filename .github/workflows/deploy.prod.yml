@@ -1,22 +1,22 @@
 name: Deploy to PROD
 
-# Dynamic name for better visibility
+# Shows who triggered the workflow
 run-name: Deploy PROD by @${{ github.actor }}
 
-# Manual trigger only, no inputs required
+# Manual trigger only
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: self-hosted
-    
-    # PROD Environment tracking for deployment history and status
+    runs-on: [self-hosted, prod-server]
+
+    # Track deployment history in PROD environment
     environment:
       name: PROD
-      url: http://localhost:8081/
-    
-    # Token with admin privileges to bypass branch protection
+      # url: https://site.com  # Optional: PROD site URL
+
+    # Write permission to bypass branch protection
     permissions:
       contents: write
 
@@ -24,9 +24,9 @@ jobs:
       - name: Checkout MAIN Branch
         uses: actions/checkout@v4
         with:
-          ref: main           # Always target MAIN branch explicitly (Production)
-          fetch-depth: 0      # Fetch full history for tag reading and merge operation
-          token: ${{ secrets.BYPASS_TOKEN }}  # Use bypass token to push through branch protection
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.BYPASS_TOKEN }}
 
       - name: Setup Git User (For Merge)
         run: |
@@ -37,100 +37,89 @@ jobs:
       - name: Get Version from QA
         shell: powershell
         run: |
-          # Fetch all tags and QA branch from remote
+          # Fetch all tags and QA branch
           git fetch origin qa --tags
-          
-          # Get all QA tags sorted by version
-          $allQaTags = git tag -l "qa-v*" | Sort-Object -Descending
-          
+
+          # Sort all QA tags by semantic version
+          $allQaTags = git tag -l "qa-v*" | Sort-Object {
+            $parts = $_ -replace "^qa-v", "" -split "\."
+            [int]$parts[0] * 1000000 + [int]$parts[1] * 10000 + [int]$parts[2] * 100 + [int]$parts[3]
+          } -Descending
+
           if ($allQaTags.Count -eq 0) {
             $err = "No QA tag found. Please deploy to QA environment first."
             Write-Host "[!] $err" -ForegroundColor Red
             echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
-          
-          # Get the latest QA tag (first in sorted list)
+
+          # Get the latest QA tag
           $qaTag = $allQaTags[0]
-          
           Write-Host ">> Latest QA Tag: $qaTag" -ForegroundColor Cyan
-          
-          # Convert qa-v0.1.0.1 to prod-v0.1.0.1
+
+          # Convert to PROD tag (qa-v0.1.0.1 -> prod-v0.1.0.1)
           $prodTag = $qaTag -replace "^qa-", "prod-"
-          
-          # Extract app version (remove qa-v prefix and last build number)
-          # Example: qa-v0.1.0.1 -> 0.1.0
+
+          # Extract app version (qa-v0.1.0.1 -> 0.1.0)
           $appVer = $qaTag -replace "^qa-v", "" -replace "\.\d+$", ""
-          
+
           Write-Host ">> Target PROD Tag: $prodTag" -ForegroundColor Green
           Write-Host ">> App Version: $appVer" -ForegroundColor Green
-          
-          # Save to environment for next steps
+
           echo "FULL_VERSION=$prodTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "APP_VERSION=$appVer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "QA_TAG=$qaTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      # --- STEP 2: MERGE ---
+      # --- STEP 2: MERGE (QA -> MAIN) ---
       - name: Merge QA into MAIN
         shell: powershell
         run: |
           Write-Host ">> Merging QA into MAIN..." -ForegroundColor Cyan
           git fetch origin qa
-          
-          # Try to merge QA into MAIN
-          $commitMsg = "chore(prod): release qa to main [v$env:APP_VERSION from $env:QA_TAG] - CI/CD Auto-Release"
+
+          $runNum = "${{ github.run_number }}"
+          $commitMsg = "ci(prod): QA -> PROD automated release [$env:FULL_VERSION] from $env:QA_TAG - GitHub Actions Run #$runNum"
           git merge origin/qa --allow-unrelated-histories --no-edit -m "$commitMsg"
-          
-          # Check if merge resulted in conflicts
+
+          # Check for merge conflicts
           $conflictFiles = git diff --name-only --diff-filter=U
           if ($conflictFiles) {
             $err = "Merge conflict detected. Conflicting files: $conflictFiles"
             Write-Host "[!] MERGE CONFLICT DETECTED!" -ForegroundColor Red
             Write-Host "Conflicting files:" -ForegroundColor Yellow
             Write-Host $conflictFiles
-            Write-Host "`nPlease resolve conflicts manually and try again." -ForegroundColor Yellow
             echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
-          
-          # Push merged changes back to GitHub
+
           git push origin main
-          if ($LASTEXITCODE -ne 0) {
-            $err = "Failed to push merged changes to GitHub. Check branch protection rules."
-            Write-Host "[!] $err" -ForegroundColor Red
-            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            exit 1
-          }
-          Write-Host "[OK] Merge Success and Pushed (QA -> MAIN)!" -ForegroundColor Green
+          Write-Host "[OK] Merge Success (QA -> MAIN)!" -ForegroundColor Green
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: "24"
 
       # --- STEP 3: DEPLOY ---
-      # Install & Build is handled inside the deploy script on the server
       - name: Run Deploy Script
         shell: powershell
         run: |
-          # MAIN branch is now updated, triggering deployment...
-          ./scripts/deploy.ps1 -environment "PROD"
+          $ErrorActionPreference = "Continue"
+          ./scripts/deploy.ps1 -environment "prod"
           if ($LASTEXITCODE -ne 0) {
-            $err = "Deploy script failed with exit code $LASTEXITCODE. Check deployment logs."
+            $err = "Deploy script failed with exit code $LASTEXITCODE. Check deployment logs above for details."
             echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
 
-      # --- STEP 4: TAGGING (Inherited from QA) ---
-      # Only create tag if deployment was successful
+      # --- STEP 4: TAGGING ---
       - name: Create Git Tag
         if: success()
         shell: powershell
         run: |
-          # Check if tag already exists
           $existingTag = git tag -l $env:FULL_VERSION
           if ($existingTag) {
-            Write-Host "[!] Tag $env:FULL_VERSION already exists. Deployment succeeded but tag was already created." -ForegroundColor Yellow
+            Write-Host "[!] Tag $env:FULL_VERSION already exists." -ForegroundColor Yellow
             exit 0
           } else {
             git tag $env:FULL_VERSION
@@ -139,25 +128,23 @@ jobs:
           }
 
       # --- STEP 5: SUMMARY ---
-      # Always show summary, even if deployment failed
       - name: Add Job Summary
         if: always()
         shell: powershell
         run: |
           $status = if ("${{ job.status }}" -eq "success") { "SUCCESS" } else { "FAILED" }
-          
+
           $msg = "### Deploy Summary`n"
           $msg += "* **Status:** $status`n"
-          
-          # Show error reason if failed
+
           if ($env:FAILURE_REASON) {
             $msg += "* **ERROR REASON:** $env:FAILURE_REASON`n"
           }
-          
+
           $msg += "* **Environment:** PROD`n"
           $msg += "* **Source QA Tag:** $($env:QA_TAG -replace '^$', 'N/A')`n"
           $msg += "* **PROD Release Tag:** $($env:FULL_VERSION -replace '^$', 'N/A - Failed before tagging')`n"
           $msg += "* **App Version:** $($env:APP_VERSION -replace '^$', 'N/A')`n"
           $msg += "* **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm')`n"
-          
+
           echo $msg | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
