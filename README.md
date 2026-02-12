@@ -76,7 +76,7 @@ This project provides a **complete, automated CI/CD pipeline** specifically desi
 1. **Clone and configure**
 
    ```bash
-   git clone https://github.com/yourusername/iis-nodejs-deployment.git
+   git clone https://github.com/hasanugr/iis-nodejs-deployment.git
    cd iis-nodejs-deployment
    ```
 
@@ -364,7 +364,7 @@ Designed for organizations running Node.js applications on Windows Server + IIS,
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/iis-nodejs-deployment/issues)
+- **Issues**: [GitHub Issues](https://github.com/hasanugr/iis-nodejs-deployment/issues)
 - **Documentation**: [Complete Setup Guide](docs/ci-cd-guide-en.md)
 - **Discussions**: Share your use cases and improvements
 
