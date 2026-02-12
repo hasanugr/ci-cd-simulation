@@ -1,22 +1,22 @@
 name: Deploy to QA
 
-# Dynamic name for better visibility
+# Shows who triggered the workflow
 run-name: Deploy QA by @${{ github.actor }}
 
-# Manual trigger only, no inputs required
+# Manual trigger only
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: self-hosted
-    
-    # QA Environment tracking for deployment history and status
+    runs-on: [self-hosted, qa-server]
+
+    # Track deployment history in QA environment
     environment:
       name: QA
-      url: http://localhost:8080/
-    
-    # Token with admin privileges to bypass branch protection
+      # url: https://qa.site.com  # Optional: QA site URL
+
+    # Write permission to bypass branch protection
     permissions:
       contents: write
 
@@ -24,66 +24,25 @@ jobs:
       - name: Checkout QA Branch
         uses: actions/checkout@v4
         with:
-          ref: qa             # Always target QA branch explicitly
-          fetch-depth: 0      # Fetch full history for tag calculation and merge operation
-          token: ${{ secrets.BYPASS_TOKEN }}  # Use bypass token to push through branch protection
+          ref: qa
+          fetch-depth: 0
+          token: ${{ secrets.BYPASS_TOKEN }}
 
       - name: Setup Git User (For Merge)
         run: |
           git config --global user.name "CI/CD Bot"
           git config --global user.email "bot@ci-cd.com"
 
-      # --- STEP 1: READ VERSION & CALCULATE BUILD NUMBER ---
-      - name: Calculate Smart Version
-        shell: powershell
-        run: |
-          # Read version from package.json
-          $json = Get-Content 'package.json' -Raw | ConvertFrom-Json
-          $appVer = $json.version
-          
-          Write-Host ">> Package Version: $appVer" -ForegroundColor Cyan
-          
-          # Find existing tags for this version
-          git fetch --tags
-          $prefix = "qa-v$appVer."
-          $tagOutput = git tag -l "$prefix*"
-          
-          # Calculate next build number
-          if ([string]::IsNullOrWhiteSpace($tagOutput)) {
-            $buildNum = 1
-          } else {
-            # Split tags into array and extract numbers
-            $tags = $tagOutput -split "`n" | Where-Object { $_ -ne "" }
-            $maxNum = 0
-            foreach ($tag in $tags) {
-               $num = [int]($tag -replace $prefix, "")
-               if ($num -gt $maxNum) { $maxNum = $num }
-            }
-            $buildNum = $maxNum + 1
-          }
-          
-          # Construct final version tag (e.g., qa-v0.1.0.1)
-          $fullVer = "$prefix$buildNum"
-          
-          Write-Host ">> Next Build Number: $buildNum" -ForegroundColor Green
-          Write-Host ">> Final Tag: $fullVer" -ForegroundColor Green
-          
-          # Save to environment for next steps
-          echo "FULL_VERSION=$fullVer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "APP_VERSION=$appVer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      # --- STEP 2: MERGE ---
+      # --- STEP 1: MERGE (DEV -> QA) ---
       - name: Merge DEV into QA
         shell: powershell
         run: |
           Write-Host ">> Merging DEV into QA..." -ForegroundColor Cyan
           git fetch origin dev
-          
-          # Try to merge DEV into QA
-          $commitMsg = "chore(qa): merge dev to qa [v$env:APP_VERSION] - CI/CD Auto-Merge"
-          git merge origin/dev --allow-unrelated-histories --no-edit -m "$commitMsg"
-          
-          # Check if merge resulted in conflicts
+
+          git merge origin/dev --allow-unrelated-histories --no-edit -m "ci(qa): DEV -> QA merge (version will be tagged after)"
+
+          # Check for merge conflicts
           $conflictFiles = git diff --name-only --diff-filter=U
           if ($conflictFiles) {
             $err = "Merge conflict detected. Conflicting files: $conflictFiles"
@@ -94,45 +53,81 @@ jobs:
             echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
-          
-          # Push merged changes back to GitHub
-          git push origin qa
-          if ($LASTEXITCODE -ne 0) {
-            $err = "Failed to push merged changes to GitHub. Check branch protection rules."
-            Write-Host "[!] $err" -ForegroundColor Red
-            echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            exit 1
+
+          Write-Host "[OK] Merge Success!" -ForegroundColor Green
+
+      # --- STEP 2: CALCULATE VERSION (after merge - package.json now available from DEV) ---
+      - name: Calculate Smart Version
+        shell: powershell
+        run: |
+          # Read version from package.json (after merge - updated version from DEV)
+          $json = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          $appVer = $json.version
+
+          Write-Host ">> Package Version: $appVer" -ForegroundColor Cyan
+
+          # Find existing tags for this version
+          git fetch --tags
+          $prefix = "qa-v$appVer."
+          $tagOutput = git tag -l "$prefix*"
+
+          # Calculate next build number
+          if ([string]::IsNullOrWhiteSpace($tagOutput)) {
+            $buildNum = 1
+          } else {
+            $tags = $tagOutput -split "`n" | Where-Object { $_ -ne "" }
+            $maxNum = 0
+            foreach ($tag in $tags) {
+               $num = [int]($tag -replace [regex]::Escape($prefix), "")
+               if ($num -gt $maxNum) { $maxNum = $num }
+            }
+            $buildNum = $maxNum + 1
           }
-          Write-Host "[OK] Merge Success and Pushed!" -ForegroundColor Green
+
+          # Final version tag (e.g., qa-v0.1.7.1)
+          $fullVer = "$prefix$buildNum"
+
+          Write-Host ">> Next Build Number: $buildNum" -ForegroundColor Green
+          Write-Host ">> Final Tag: $fullVer" -ForegroundColor Green
+
+          echo "FULL_VERSION=$fullVer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "APP_VERSION=$appVer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # --- STEP 2b: UPDATE MERGE COMMIT AND PUSH ---
+      - name: Amend Merge Commit with Version and Push
+        shell: powershell
+        run: |
+          $runNum = "${{ github.run_number }}"
+          $commitMsg = "ci(qa): DEV -> QA automated deploy [$env:FULL_VERSION] - GitHub Actions Run #$runNum"
+          git commit --amend -m "$commitMsg"
+          git push origin qa
+          Write-Host "[OK] Pushed with version tag in commit message!" -ForegroundColor Green
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: "24"
 
       # --- STEP 3: DEPLOY ---
-      # Install & Build is handled inside the deploy script on the server
       - name: Run Deploy Script
         shell: powershell
         run: |
-          # QA branch is now updated, triggering deployment...
-          ./scripts/deploy.ps1 -environment "QA"
+          $ErrorActionPreference = "Continue"
+          ./scripts/deploy.ps1 -environment "qa"
           if ($LASTEXITCODE -ne 0) {
-            $err = "Deploy script failed with exit code $LASTEXITCODE. Check deployment logs."
+            $err = "Deploy script failed with exit code $LASTEXITCODE. Check deployment logs above for details."
             echo "FAILURE_REASON=$err" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             exit 1
           }
 
-      # --- STEP 4: TAGGING (Smart Version) ---
-      # Only create tag if deployment was successful
+      # --- STEP 4: TAGGING ---
       - name: Create Git Tag
         if: success()
         shell: powershell
         run: |
-          # Check if tag already exists
           $existingTag = git tag -l $env:FULL_VERSION
           if ($existingTag) {
-            Write-Host "[!] Tag $env:FULL_VERSION already exists. Deployment succeeded but tag was already created." -ForegroundColor Yellow
+            Write-Host "[!] Tag $env:FULL_VERSION already exists." -ForegroundColor Yellow
             exit 0
           } else {
             git tag $env:FULL_VERSION
@@ -141,24 +136,22 @@ jobs:
           }
 
       # --- STEP 5: SUMMARY ---
-      # Always show summary, even if deployment failed
       - name: Add Job Summary
         if: always()
         shell: powershell
         run: |
           $status = if ("${{ job.status }}" -eq "success") { "SUCCESS" } else { "FAILED" }
-          
+
           $msg = "### Deploy Summary`n"
           $msg += "* **Status:** $status`n"
-          
-          # Show error reason if failed
+
           if ($env:FAILURE_REASON) {
             $msg += "* **ERROR REASON:** $env:FAILURE_REASON`n"
           }
-          
+
           $msg += "* **Environment:** QA`n"
           $msg += "* **Release Tag:** $($env:FULL_VERSION -replace '^$', 'N/A - Failed before tagging')`n"
           $msg += "* **App Version:** $($env:APP_VERSION -replace '^$', 'N/A')`n"
           $msg += "* **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm')`n"
-          
+
           echo $msg | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
